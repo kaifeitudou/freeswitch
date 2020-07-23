@@ -426,6 +426,7 @@ typedef struct mcu_layer_geometry_s {
 	int overlap;
 	int zoom;
 	int border;
+	int display_mode;
 	char *res_id;
 	char *role_id;
 	char *audio_position;
@@ -484,6 +485,7 @@ typedef struct mcu_layer_s {
 	switch_image_t *banner_img;
 	switch_image_t *logo_img;
 	switch_image_t *mute_img;
+	switch_image_t *microphone_img;
 	switch_img_txt_handle_t *txthandle;
 	conference_file_node_t *fnode;
 	switch_img_position_t logo_pos;
@@ -1039,6 +1041,7 @@ switch_status_t conference_video_attach_video_layer(conference_member_t *member,
 int conference_video_set_fps(conference_obj_t *conference, float fps);
 void conference_member_set_logo(conference_member_t *member, const char *path);
 void conference_video_layer_set_logo(conference_member_t *member, mcu_layer_t *layer);
+void conference_video_layer_set_microphone(conference_member_t *member, mcu_layer_t *layer);//add by dhd 20200709
 void conference_video_layer_set_banner(conference_member_t *member, mcu_layer_t *layer, const char *text);
 void conference_fnode_seek(conference_file_node_t *fnode, switch_stream_handle_t *stream, char *arg);
 uint32_t conference_member_stop_file(conference_member_t *member, file_stop_t stop);

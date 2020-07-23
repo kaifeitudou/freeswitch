@@ -246,6 +246,7 @@ SWITCH_DECLARE(void) switch_img_attenuate(switch_image_t *img);
 * \param[in]    noalpha   skip writing to non-transparent pixels
 */
 SWITCH_DECLARE(void) switch_img_patch_rgb(switch_image_t *IMG, switch_image_t *img, int x, int y, switch_bool_t noalpha);
+SWITCH_DECLARE(void) switch_img_patch_rgb_alpha_ex(switch_image_t *IMG, switch_image_t *img, int x, int y);
 
 /*!\brief patch part of a small img (x,y,w,h) to a big IMG at position X,Y
 *

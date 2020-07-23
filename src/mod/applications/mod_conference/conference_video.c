@@ -140,7 +140,7 @@ void conference_video_parse_layouts(conference_obj_t *conference, int WIDTH, int
 
 				for (x_image = switch_xml_child(x_layout, "image"); x_image; x_image = x_image->next) {
 					const char *res_id = NULL, *audio_position = NULL, *role_id = NULL;
-					int x = -1, y = -1, scale = -1, hscale = -1, floor = 0, flooronly = 0, fileonly = 0, overlap = 0, zoom = 0;
+					int x = -1, y = -1, scale = -1, hscale = -1, floor = 0, flooronly = 0, fileonly = 0, overlap = 0, zoom = 0, display_mode = -1;
 
 					if ((val = switch_xml_attr(x_image, "x"))) {
 						x = atoi(val);
@@ -201,6 +201,12 @@ void conference_video_parse_layouts(conference_obj_t *conference, int WIDTH, int
 						if (border > 50) border = 50;
 					}
 
+					if ((val = switch_xml_attr(x_image, "display-mode"))) {
+						display_mode = atoi(val);
+						if (display_mode < 0) display_mode = 0;
+						if (display_mode > 2) display_mode = 2;
+					}
+
 					if (x < 0 || y < 0 || scale < 0) {
 						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "invalid image\n");
 						continue;
@@ -226,6 +232,7 @@ void conference_video_parse_layouts(conference_obj_t *conference, int WIDTH, int
 					vlayout->images[vlayout->layers].flooronly = flooronly;
 					vlayout->images[vlayout->layers].fileonly = fileonly;
 					vlayout->images[vlayout->layers].overlap = overlap;
+					vlayout->images[vlayout->layers].display_mode = display_mode;
 
 
 					if (res_id) {
@@ -629,7 +636,7 @@ void conference_video_scale_and_patch(mcu_layer_t *layer, switch_image_t *ximg, 
 		screen_aspect = (double) layer->screen_w / layer->screen_h;
 		img_aspect = (double) img->d_w / img->d_h;
 
-		if ((layer->geometry.zoom || layer->cam_opts.autozoom || 
+		if ((layer->geometry.zoom || layer->geometry.display_mode==0 || layer->cam_opts.autozoom || 
 												 layer->cam_opts.autopan || layer->cam_opts.manual_pan || layer->cam_opts.manual_zoom)) {
 
 			double scale = 1;
@@ -746,6 +753,9 @@ void conference_video_scale_and_patch(mcu_layer_t *layer, switch_image_t *ximg, 
 						crop_x = use_geometry->x;
 					}
 				} else if (screen_aspect <= img_aspect) {
+					if(layer->geometry.display_mode == 0)
+						crop_x = (img->d_w - crop_w)/2;
+					else
 					crop_x = img->w / 4;
 				}
 
@@ -756,6 +766,9 @@ void conference_video_scale_and_patch(mcu_layer_t *layer, switch_image_t *ximg, 
 						crop_y = use_geometry->y;
 					}
 				} else if (screen_aspect > img_aspect) {
+					if(layer->geometry.display_mode == 0)
+						crop_y = (img->d_h - crop_h)/2;
+					else
 					crop_y = img->h / 4;
 				}
 
@@ -810,15 +823,36 @@ void conference_video_scale_and_patch(mcu_layer_t *layer, switch_image_t *ximg, 
 			switch_img_free(&layer->img);
 			switch_mutex_unlock(layer->overlay_mutex);
 		}
-		
-		if (screen_aspect > img_aspect) {
-			img_w = (uint32_t)ceil((double)img_aspect * layer->screen_h);
-			x_pos += (layer->screen_w - img_w) / 2;
-		} else if (screen_aspect < img_aspect) {
-			img_h = (uint32_t)ceil((double)layer->screen_w / img_aspect);
-			y_pos += (layer->screen_h - img_h) / 2;
+		if(layer->geometry.display_mode != 1)	//排除图像为不等比缩放，如果图像为不等比缩放，不用计算x,y坐标
+		{
+			if (screen_aspect > img_aspect) {
+				if(layer->geometry.display_mode == 2)
+				{
+					double aspect = 0.0;
+					aspect = (double)layer->screen_h/img->d_h;
+					img_w = (uint32_t)ceil((double)aspect * img->d_w);
+					x_pos += (layer->screen_w - img_w)/2;
+				}
+				else
+				{
+					img_w = (uint32_t)ceil((double)img_aspect * layer->screen_h);
+					x_pos += (layer->screen_w - img_w) / 2;
+				}
+			} else if (screen_aspect < img_aspect) {
+				if(layer->geometry.display_mode == 2)
+				{
+					double aspect = 0.0;
+					aspect = (double)layer->screen_w/img->d_w;
+					img_h = (uint32_t)ceil((double)aspect * img->d_h);
+					y_pos += (layer->screen_h - img_h)/2;
+				}
+				else
+				{
+					img_h = (uint32_t)ceil((double)layer->screen_w / img_aspect);
+					y_pos += (layer->screen_h - img_h) / 2;
+				}
+			}
 		}
-
 		if (layer->manual_border) {
 			border = layer->manual_border;
 		} else if (layer->geometry.border) {
@@ -873,7 +907,22 @@ void conference_video_scale_and_patch(mcu_layer_t *layer, switch_image_t *ximg, 
 			//switch_img_patch(IMG, layer->logo_img, layer->x_pos + ex + border, layer->y_pos + ey + border);
 		}
 
+		//microphone img 制作
+		if(layer->microphone_img) {
+			int ew = layer->img->d_w - (border * 2), eh = layer->img->d_h - (border * 2);
+			int ex = 0, ey = 0;
+			int h = 0;
 
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,  "put the microphone_img into the img\n");
+
+			switch_img_fit(&layer->microphone_img, 300, 70, SWITCH_FIT_SIZE);	//将microphone_img 安照size进行转换，长宽分别是ew和eh
+			h = layer->microphone_img->d_h;
+			if(layer->banner_img)
+				h += layer->banner_img->d_h;
+			switch_img_find_position(POS_LEFT_BOT, ew, eh, layer->microphone_img->d_w, h, &ex, &ey);
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,  "microphone_img ex:%d ey:%d ew:%d eh:%d d_w:%d h:%d\n", ex, ey, ew, eh, layer->microphone_img->d_w, h);
+			switch_img_patch(layer->img, layer->microphone_img, ex + border, ey + border);
+		}
 		if (layer->banner_img && !layer->banner_patched) {
 			int ew = layer->img->d_w, eh = layer->img->d_h;
 			int ex = 0, ey = 0;
@@ -1121,6 +1170,84 @@ void conference_video_layer_set_logo(conference_member_t *member, mcu_layer_t *l
 	switch_mutex_unlock(layer->canvas->mutex);
 }
 
+void conference_video_layer_set_microphone(conference_member_t *member, mcu_layer_t *layer)
+{
+	int score_iir = 0;
+	int img_num = 0;
+	int energy_h = 10;
+	int energy_l = 40;
+	int score_gate = 200;
+	int mic_img_d_w = 0;
+	char *microphone_img_path = NULL;
+	char *var = NULL;
+	char *default_path = "/usr/local/freeswitch/images/microphone/white/";
+	char *img_name = "microphone.png";
+	char *mute_img_name = "microphone-mute.png";
+	char *bg_name = "bg.png";
+	const char *caller_name;
+	switch_image_t *microphone_img = NULL;
+	switch_image_t *microphone_text = NULL;
+	
+	switch_mutex_lock(member->flag_mutex);
+	switch_mutex_lock(layer->canvas->mutex);
+	score_iir = member->score_iir;
+	//映射柱状图
+	if(score_iir > SCORE_MAX_IIR)
+		score_iir = SCORE_MAX_IIR;
+	else if(score_iir > score_gate)
+		img_num = energy_l + (score_iir-score_gate)*energy_h/(SCORE_MAX_IIR-score_gate);
+	else if(score_iir > 0)
+		img_num = score_iir*energy_l/score_gate;
+	//test
+	img_num = score_iir/35;
+	if(img_num > 18)
+		img_num = 18;
+
+	//背景图
+	microphone_img_path = (char *)malloc(100);
+	memset(microphone_img_path, 0, strlen(microphone_img_path));
+	sprintf(microphone_img_path, "%s%s", default_path, bg_name);
+	layer->microphone_img = switch_img_read_png(microphone_img_path, SWITCH_IMG_FMT_ARGB);//SWITCH_IMG_FMT_I420);//SWITCH_IMG_FMT_ARGB);
+	//组合柱状图地址
+	memset(microphone_img_path, 0, strlen(microphone_img_path));
+	if (!(conference_utils_member_test_flag(member, MFLAG_CAN_SPEAK)) && (score_iir==0))
+	{
+		sprintf(microphone_img_path, "%s%s", default_path, mute_img_name);
+	}
+	else
+	{
+		sprintf(microphone_img_path, "%s%d%s", default_path, img_num, img_name);
+	}
+	if((microphone_img = switch_img_read_png(microphone_img_path, SWITCH_IMG_FMT_ARGB)))
+	{
+		mic_img_d_w = microphone_img->d_w;
+	}
+	//制作文字图
+	var = (char *)malloc(100);
+	memset(var, 0x00, 100);
+	if ((caller_name = switch_channel_get_variable_dup(member->channel, "caller_id_name", SWITCH_FALSE, -1)))	
+		sprintf(var, "#cccccc:transparent:/usr/local/freeswitch/fonts/FreeSansBold.ttf:35:%s", caller_name);
+	else
+		sprintf(var, "#cccccc:transparent:/usr/local/freeswitch/fonts/FreeSansBold.ttf:35:MEMBER%d", member->id);
+	if ((microphone_text = switch_img_write_text_img(layer->microphone_img->d_w-mic_img_d_w, layer->microphone_img->d_h, SWITCH_FALSE, var))) {
+		switch_img_fit(&microphone_text, layer->microphone_img->d_w-mic_img_d_w, layer->microphone_img->d_h, SWITCH_FIT_NECESSARY);
+	}
+	//填充图像
+	if(microphone_img)
+	{
+		switch_img_patch_rgb_alpha_ex(layer->microphone_img, microphone_img, 0, 10);
+		switch_img_free(&microphone_img);
+	}
+	if(microphone_text)
+	{
+		switch_img_patch_rgb_alpha_ex(layer->microphone_img, microphone_text, mic_img_d_w+5, 10);
+		switch_img_free(&microphone_text);
+	}
+	
+	switch_mutex_unlock(layer->canvas->mutex);
+	switch_mutex_unlock(member->flag_mutex);
+	return;
+}
 void conference_member_set_logo(conference_member_t *member, const char *path)
 {
 	const char *var = NULL;
@@ -1606,6 +1733,7 @@ void conference_video_init_canvas_layers(conference_obj_t *conference, mcu_canva
 		layer->geometry.flooronly = vlayout->images[i].flooronly;
 		layer->geometry.fileonly = vlayout->images[i].fileonly;
 		layer->geometry.overlap = vlayout->images[i].overlap;
+		layer->geometry.display_mode = vlayout->images[i].display_mode;
 		layer->idx = i;
 		layer->refresh = 1;
 
@@ -2221,6 +2349,7 @@ void *SWITCH_THREAD_FUNC conference_video_layer_thread_run(switch_thread_t *thre
 
 		if (layer) {
 			if (layer->need_patch) {
+				conference_video_layer_set_microphone(member, layer);
 				conference_video_scale_and_patch(layer, NULL, SWITCH_FALSE);
 				layer->need_patch = 0;
 			}
@@ -3601,6 +3730,7 @@ void *SWITCH_THREAD_FUNC conference_video_muxing_thread_run(switch_thread_t *thr
 
 							if (layer->mute_img) {
 								conference_video_member_video_mute_banner(layer->mute_img, imember);
+								conference_video_layer_set_microphone(layer->member, layer);
 								conference_video_scale_and_patch(layer, layer->mute_img, SWITCH_FALSE);
 							}
 						}
@@ -3885,6 +4015,7 @@ void *SWITCH_THREAD_FUNC conference_video_muxing_thread_run(switch_thread_t *thr
 
 						if (layer && use_img) {
 							//switch_img_copy(use_img, &layer->cur_img);
+							conference_video_layer_set_microphone(omember, layer);
 							conference_video_scale_and_patch(layer, use_img, SWITCH_FALSE);
 						}
 						
@@ -3908,6 +4039,7 @@ void *SWITCH_THREAD_FUNC conference_video_muxing_thread_run(switch_thread_t *thr
 						switch_img_free(&layer->logo_img);
 						layer->member_id = -1;
 						//switch_img_copy(img, &layer->cur_img);
+						conference_video_layer_set_microphone(layer->member, layer);
 						conference_video_scale_and_patch(layer, img, SWITCH_FALSE);
 					}
 				}
@@ -4011,6 +4143,7 @@ void *SWITCH_THREAD_FUNC conference_video_muxing_thread_run(switch_thread_t *thr
 							layer->need_patch = 1;
 							conference_video_wake_layer_thread(layer->member);
 						} else {
+							conference_video_layer_set_microphone(layer->member, layer);
 							conference_video_scale_and_patch(layer, NULL, SWITCH_FALSE);
 						}
 
@@ -4038,6 +4171,7 @@ void *SWITCH_THREAD_FUNC conference_video_muxing_thread_run(switch_thread_t *thr
 							layer->need_patch = 1;
 							conference_video_wake_layer_thread(layer->member);
 						} else {
+							conference_video_layer_set_microphone(layer->member, layer);
 							conference_video_scale_and_patch(layer, NULL, SWITCH_FALSE);
 						}
 					}
@@ -4524,7 +4658,7 @@ void *SWITCH_THREAD_FUNC conference_video_super_muxing_thread_run(switch_thread_
 					layer->cur_img = img;
 					img = NULL;
 				}
-
+				conference_video_layer_set_microphone(layer->member, layer);
 				conference_video_scale_and_patch(layer, NULL, SWITCH_FALSE);
 			}
 
